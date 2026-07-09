@@ -12,20 +12,36 @@ st.markdown("---")
 # 1. Establecer conexión con Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Función para leer los datos frescos
+# Función para leer los datos frescos y corregir tipos de datos
 def cargar_datos():
-    # Lee la hoja de cálculo usando la configuración de secrets
-    return conn.read(ttl="0s") # ttl="0s" obliga a leer datos en tiempo real sin caché
+    # Lee la hoja de cálculo en tiempo real sin usar caché (ttl="0s")
+    df = conn.read(ttl="0s")
+    
+    # FORZAR TIPOS DE DATOS: Esto evita que la app se caiga con TypeErrors
+    if not df.empty:
+        # Aseguramos que las columnas críticas sean tratadas como texto
+        df["Notas Bodega"] = df["Notas Bodega"].astype(str).replace("nan", "")
+        df["Estado"] = df["Estado"].astype(str).replace("nan", "Pendiente")
+        df["Proveedor"] = df["Proveedor"].astype(str).replace("nan", "")
+        df["OC"] = df["OC"].astype(str).replace("nan", "")
+        df["Fecha Sugerida"] = df["Fecha Sugerida"].astype(str).replace("nan", "")
+        df["Hora Sugerida"] = df["Hora Sugerida"].astype(str).replace("nan", "")
+        df["Volumen"] = df["Volumen"].astype(str).replace("nan", "")
+        
+        # Aseguramos que el ID sea numérico entero para búsquedas exactas
+        df["ID"] = pd.to_numeric(df["ID"], errors='coerce').fillna(0).astype(int)
+        
+    return df
 
-# Inicializar los datos del Sheet
+# Inicializar los datos del Sheet de forma segura
 try:
     df_actual = cargar_datos()
 except Exception as e:
-    st.error("Error al conectar con Google Sheets. Verifica la configuración de Secrets.")
+    st.error(f"Error al conectar con Google Sheets. Verifica la configuración de Secrets. Detalle: {e}")
     st.stop()
 
 # Selector de Rol en la barra lateral
-rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras", "Bodega"])
+rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
 
 # ==========================================
 # VISTA DE COMPRAS (TÚ)
@@ -47,7 +63,7 @@ if rol == "Compras (Tú)":
         submit = st.form_submit_button("Enviar a Bodega")
         
         if submit and proveedor and oc:
-            # Traer datos actualizados para calcular el ID consecutivo
+            # Traer datos actualizados para calcular el ID consecutivo correcto
             df_guardar = cargar_datos()
             nuevo_id = int(df_guardar["ID"].max() + 1) if not df_guardar.empty and pd.notna(df_guardar["ID"].max()) else 1
             
@@ -62,7 +78,7 @@ if rol == "Compras (Tú)":
                 "Notas Bodega": ""
             }
             
-            # Unir y actualizar en la nube
+            # Unir el nuevo registro y actualizar la nube
             df_guardar = pd.concat([df_guardar, pd.DataFrame([nueva_fila])], ignore_index=True)
             conn.update(data=df_guardar)
             st.success(f"Propuesta para {proveedor} enviada con éxito a Bodega.")
@@ -79,7 +95,7 @@ else:
     st.markdown("Revise las propuestas de compras y confirme el horario para preparar devoluciones.")
 
     df_bodega = cargar_datos()
-    # Asegurar filtrado correcto de pendientes
+    # Filtrar estrictamente las filas pendientes
     pendientes = df_bodega[df_bodega["Estado"] == "Pendiente"]
 
     if pendientes.empty:
@@ -103,6 +119,7 @@ else:
                     with col_btn1:
                         if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
                             df_actualizar = cargar_datos()
+                            # Modificar usando el ID único de la fila
                             df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Estado"] = "Aprobado"
                             df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Notas Bodega"] = nota_bodega
                             conn.update(data=df_actualizar)
@@ -111,6 +128,7 @@ else:
                     with col_btn2:
                         if st.button("❌ Rechazar", key=f"rej_{row['ID']}"):
                             df_actualizar = cargar_datos()
+                            # Modificar usando el ID único de la fila
                             df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Estado"] = "Reprogramar"
                             df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Notas Bodega"] = "Solicita cambio de hora"
                             conn.update(data=df_actualizar)
@@ -119,5 +137,6 @@ else:
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")
+    # Mostrar todo lo que ya fue procesado por bodega
     confirmados = df_bodega[df_bodega["Estado"] != "Pendiente"]
     st.dataframe(confirmados, use_container_width=True)

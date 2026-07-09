@@ -25,7 +25,7 @@ except Exception as e:
     st.stop()
 
 # Selector de Rol en la barra lateral
-rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
+rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras", "Bodega"])
 
 # ==========================================
 # VISTA DE COMPRAS (TÚ)

@@ -1,6 +1,6 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import gspread
 from datetime import datetime
 
 # Configuración de la página
@@ -9,36 +9,32 @@ st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
 st.title("📅 Sistema de Programación de Entregas - Super Barú")
 st.markdown("---")
 
-# 1. Establecer conexión con Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# Función para leer los datos frescos y corregir tipos de datos
-def cargar_datos():
-    # Lee la hoja de cálculo en tiempo real sin usar caché (ttl="0s")
-    df = conn.read(ttl="0s")
-    
-    # FORZAR TIPOS DE DATOS: Esto evita que la app se caiga con TypeErrors
-    if not df.empty:
-        # Aseguramos que las columnas críticas sean tratadas como texto
-        df["Notas Bodega"] = df["Notas Bodega"].astype(str).replace("nan", "")
-        df["Estado"] = df["Estado"].astype(str).replace("nan", "Pendiente")
-        df["Proveedor"] = df["Proveedor"].astype(str).replace("nan", "")
-        df["OC"] = df["OC"].astype(str).replace("nan", "")
-        df["Fecha Sugerida"] = df["Fecha Sugerida"].astype(str).replace("nan", "")
-        df["Hora Sugerida"] = df["Hora Sugerida"].astype(str).replace("nan", "")
-        df["Volumen"] = df["Volumen"].astype(str).replace("nan", "")
-        
-        # Aseguramos que el ID sea numérico entero para búsquedas exactas
-        df["ID"] = pd.to_numeric(df["ID"], errors='coerce').fillna(0).astype(int)
-        
-    return df
-
-# Inicializar los datos del Sheet de forma segura
+# 1. Autenticación con Google Sheets usando Secrets
 try:
-    df_actual = cargar_datos()
+    # Lee las credenciales de servicio guardadas de forma segura en los Secrets
+    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    # Abre la hoja usando la URL que guardamos antes
+    sh = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
+    worksheet = sh.get_worksheet(0) # Abrir la primera pestaña
 except Exception as e:
-    st.error(f"Error al conectar con Google Sheets. Verifica la configuración de Secrets. Detalle: {e}")
+    st.error(f"Error de conexión con Google Sheets. Verifica tus credenciales en Secrets. Detalle: {e}")
     st.stop()
+
+# Función para leer los datos frescos y convertirlos a DataFrame limpia
+def cargar_datos():
+    lista_filas = worksheet.get_all_records()
+    if not lista_filas:
+        return pd.DataFrame(columns=["ID", "Proveedor", "OC", "Fecha Sugerida", "Hora Sugerida", "Volumen", "Estado", "Notas Bodega"])
+    
+    df = pd.DataFrame(lista_filas)
+    
+    # Asegurar tipos de datos correctos
+    df["Notas Bodega"] = df["Notas Bodega"].astype(str).replace("nan", "")
+    df["Estado"] = df["Estado"].astype(str).replace("nan", "Pendiente")
+    df["Proveedor"] = df["Proveedor"].astype(str).replace("nan", "")
+    df["OC"] = df["OC"].astype(str).replace("nan", "")
+    df["ID"] = pd.to_numeric(df["ID"], errors='coerce').fillna(0).astype(int)
+    return df
 
 # Selector de Rol en la barra lateral
 rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
@@ -63,24 +59,22 @@ if rol == "Compras (Tú)":
         submit = st.form_submit_button("Enviar a Bodega")
         
         if submit and proveedor and oc:
-            # Traer datos actualizados para calcular el ID consecutivo correcto
             df_guardar = cargar_datos()
-            nuevo_id = int(df_guardar["ID"].max() + 1) if not df_guardar.empty and pd.notna(df_guardar["ID"].max()) else 1
+            nuevo_id = int(df_guardar["ID"].max() + 1) if not df_guardar.empty else 1
             
-            nueva_fila = {
-                "ID": nuevo_id,
-                "Proveedor": proveedor, 
-                "OC": str(oc),
-                "Fecha Sugerida": str(fecha), 
-                "Hora Sugerida": hora.strftime("%I:%M %p"),
-                "Volumen": volumen, 
-                "Estado": "Pendiente", 
-                "Notas Bodega": ""
-            }
+            nueva_fila = [
+                nuevo_id,
+                proveedor, 
+                str(oc),
+                str(fecha), 
+                hora.strftime("%I:%M %p"),
+                volumen, 
+                "Pendiente", 
+                ""
+            ]
             
-            # Unir el nuevo registro y actualizar la nube
-            df_guardar = pd.concat([df_guardar, pd.DataFrame([nueva_fila])], ignore_index=True)
-            conn.update(data=df_guardar)
+            # Añadir fila al final de la hoja de Google Sheets
+            worksheet.append_row(nueva_fila)
             st.success(f"Propuesta para {proveedor} enviada con éxito a Bodega.")
             st.rerun()
 
@@ -95,7 +89,6 @@ else:
     st.markdown("Revise las propuestas de compras y confirme el horario para preparar devoluciones.")
 
     df_bodega = cargar_datos()
-    # Filtrar estrictamente las filas pendientes
     pendientes = df_bodega[df_bodega["Estado"] == "Pendiente"]
 
     if pendientes.empty:
@@ -118,25 +111,21 @@ else:
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
                         if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
-                            df_actualizar = cargar_datos()
-                            # Modificar usando el ID único de la fila
-                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Estado"] = "Aprobado"
-                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Notas Bodega"] = nota_bodega
-                            conn.update(data=df_actualizar)
+                            # Buscar la fila exacta en Google Sheets (gspread cuenta desde la fila 1 y los headers son la fila 1)
+                            fila_num = idx + 2 
+                            worksheet.update_cell(fila_num, 7, "Aprobado") # Columna 7 es Estado
+                            worksheet.update_cell(fila_num, 8, nota_bodega) # Columna 8 es Notas Bodega
                             st.success("Entrega aprobada exitosamente.")
                             st.rerun()
                     with col_btn2:
                         if st.button("❌ Rechazar", key=f"rej_{row['ID']}"):
-                            df_actualizar = cargar_datos()
-                            # Modificar usando el ID único de la fila
-                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Estado"] = "Reprogramar"
-                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Notas Bodega"] = "Solicita cambio de hora"
-                            conn.update(data=df_actualizar)
+                            fila_num = idx + 2
+                            worksheet.update_cell(fila_num, 7, "Reprogramar")
+                            worksheet.update_cell(fila_num, 8, "Solicita cambio de hora")
                             st.warning("Estado actualizado a Reprogramar.")
                             st.rerun()
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")
-    # Mostrar todo lo que ya fue procesado por bodega
     confirmados = df_bodega[df_bodega["Estado"] != "Pendiente"]
     st.dataframe(confirmados, use_container_width=True)

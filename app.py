@@ -1,3 +1,4 @@
+import streamlit as os
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -5,26 +6,40 @@ from datetime import datetime
 # Configuración de la página
 st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
 
-# 1. Simulación de la Base de Datos (Esto se reemplazaría con la lectura de tu Excel)
-if 'entregas_db' not in st.session_state:
-    st.session_state.entregas_db = pd.DataFrame([
-        {
-            "ID": 1, "Proveedor": "Distribuidora X", "OC": "10023", 
-            "Fecha Sugerida": "2026-07-10", "Hora Sugerida": "08:00 AM", 
-            "Volumen": "4 Pallets", "Estado": "Pendiente", "Notas Bodega": ""
-        },
-        {
-            "ID": 2, "Proveedor": "Logística Global", "OC": "10024", 
-            "Fecha Sugerida": "2026-07-10", "Hora Sugerida": "10:30 AM", 
-            "Volumen": "10 Pallets", "Estado": "Pendiente", "Notas Bodega": ""
-        }
-    ])
+# Ruta del archivo Excel en tu OneDrive local (ajustada a tu ruta según tu terminal)
+EXCEL_PATH = r"C:\Users\AmilcarContreras\OneDrive - Super Baru, S.A\Documentos\Calendario-Recibo\registro_entregas.xlsx"
 
-st.title("📅 Sistema de Programación de Entregas")
+# Función para cargar datos de Excel
+def cargar_datos():
+    try:
+        df = pd.read_excel(EXCEL_PATH, dtype={'OC': str})
+        return df
+    except Exception as e:
+        # Si el archivo no existe en la ruta, creamos uno temporal para evitar que la app se caiga
+        st.error(f"No se encontró el archivo Excel en la ruta especificada. Cargando base de datos temporal. Error: {e}")
+        return pd.DataFrame(columns=["ID", "Proveedor", "OC", "Fecha Sugerida", "Hora Sugerida", "Volumen", "Estado", "Notas Bodega"])
+
+# Función para guardar datos en Excel
+def guardar_datos(df):
+    try:
+        df.to_excel(EXCEL_PATH, index=False)
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar en el Excel: {e}")
+        return False
+
+# Inicializar datos
+entregas_df = cargar_datos()
+
+st.title("📅 Sistema de Programación de Entregas - Super Barú")
 st.markdown("---")
 
-# 2. Selector de Rol (En producción esto puede ser automático o por login simple)
+# Selector de Rol en la barra lateral
 rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
+
+# Re-cargar datos fresco en cada interacción
+if 'df_actual' not in st.session_state:
+    st.session_state.df_actual = entregas_df
 
 # ==========================================
 # VISTA DE COMPRAS (TÚ)
@@ -46,19 +61,27 @@ if rol == "Compras (Tú)":
         submit = st.form_submit_button("Enviar a Bodega")
         
         if submit and proveedor and oc:
-            # Añadir a la base de datos
+            df_actual = cargar_datos()
+            nuevo_id = int(df_actual["ID"].max() + 1) if not df_actual.empty and pd.notna(df_actual["ID"].max()) else 1
+            
             nueva_fila = {
-                "ID": len(st.session_state.entregas_db) + 1,
-                "Proveedor": proveedor, "OC": oc,
-                "Fecha Sugerida": str(fecha), "Hora Sugerida": hora.strftime("%I:%M %p"),
-                "Volumen": volumen, "Estado": "Pendiente", "Notas Bodega": ""
+                "ID": nuevo_id,
+                "Proveedor": proveedor, 
+                "OC": str(oc),
+                "Fecha Sugerida": str(fecha), 
+                "Hora Sugerida": hora.strftime("%I:%M %p"),
+                "Volumen": volumen, 
+                "Estado": "Pendiente", 
+                "Notas Bodega": ""
             }
-            st.session_state.entregas_db = pd.concat([st.session_state.entregas_db, pd.DataFrame([nueva_fila])], ignore_index=True)
-            st.success(f"Propuesta para {proveedor} enviada con éxito.")
-            st.rerun()
+            
+            df_actual = pd.concat([df_actual, pd.DataFrame([nueva_fila])], ignore_index=True)
+            if guardar_datos(df_actual):
+                st.success(f"Propuesta para {proveedor} guardada con éxito en el Excel compartido.")
+                st.rerun()
 
-    st.subheader("📋 Estado Actual de las Entregas")
-    st.dataframe(st.session_state.entregas_db, use_container_width=True)
+    st.subheader("📋 Historial y Estado en el Excel Real")
+    st.dataframe(cargar_datos(), use_container_width=True)
 
 # ==========================================
 # VISTA DE BODEGA
@@ -67,14 +90,13 @@ else:
     st.header("📦 Panel de Control de Bodega")
     st.markdown("Revise las propuestas de compras y confirme el horario para preparar devoluciones.")
 
-    # Filtrar solo lo pendiente
-    pendientes = st.session_state.entregas_db[st.session_state.entregas_db["Estado"] == "Pendiente"]
+    df_bodega = cargar_datos()
+    pendientes = df_bodega[df_bodega["Estado"] == "Pendiente"]
 
     if pendientes.empty:
-        st.info("🎉 No hay entregas pendientes por aprobar para esta semana.")
+        st.info("🎉 No hay entregas pendientes por aprobar en este momento.")
     else:
         for idx, row in pendientes.iterrows():
-            # Crear una tarjeta visual para cada entrega pendiente
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
                 with c1:
@@ -87,23 +109,26 @@ else:
                     st.markdown(f"**Volumen:** {row['Volumen']}")
                     nota_bodega = st.text_input("Notas de devolución / mermas:", key=f"nota_{row['ID']}")
                 with c4:
-                    st.write("") # Espaciador
+                    st.write("") 
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
                         if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
-                            st.session_state.entregas_db.at[idx, "Estado"] = "Aprobado"
-                            st.session_state.entregas_db.at[idx, "Notas Bodega"] = nota_bodega
-                            st.success("Entrega aprobada.")
+                            df_actualizar = cargar_datos()
+                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Estado"] = "Aprobado"
+                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Notas Bodega"] = nota_bodega
+                            guardar_datos(df_actualizar)
+                            st.success("Entrega aprobada en el Excel.")
                             st.rerun()
                     with col_btn2:
                         if st.button("❌ Rechazar", key=f"rej_{row['ID']}"):
-                            st.session_state.entregas_db.at[idx, "Estado"] = "Reprogramar"
-                            st.session_state.entregas_db.at[idx, "Notas Bodega"] = "Solicita cambio de hora"
-                            st.warning("Se ha notificado el rechazo.")
+                            df_actualizar = cargar_datos()
+                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Estado"] = "Reprogramar"
+                            df_actualizar.loc[df_actualizar["ID"] == row["ID"], "Notas Bodega"] = "Solicita cambio de hora"
+                            guardar_datos(df_actualizar)
+                            st.warning("Estado actualizado a Reprogramar.")
                             st.rerun()
 
-    # Mostrar historial de lo ya procesado abajo
     st.markdown("---")
-    st.subheader("🗓️ Cronograma General Confirmado")
-    confirmados = st.session_state.entregas_db[st.session_state.entregas_db["Estado"] != "Pendiente"]
+    st.subheader("🗓️ Cronograma General Confirmado (Leído del Excel)")
+    confirmados = df_bodega[df_bodega["Estado"] != "Pendiente"]
     st.dataframe(confirmados, use_container_width=True)

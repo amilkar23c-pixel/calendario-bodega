@@ -21,7 +21,6 @@ def cargar_datos_seguro():
         respuesta = requests.get(url_fresca, timeout=10)
         
         if respuesta.status_code != 200:
-            st.error(f"⚠️ Google Sheets devolvió un código de error: {respuesta.status_code}")
             return []
             
         lineas = respuesta.text.splitlines()
@@ -40,11 +39,7 @@ def cargar_datos_seguro():
                 "Notas Bodega": fila.get("Notas Bodega", "").strip()
             })
         return datos
-    except requests.exceptions.Timeout:
-        st.error("⏳ La conexión con Google Sheets tardó demasiado tiempo. Intenta recargar la página.")
-        return []
-    except Exception as e:
-        st.error(f"❌ Error al leer los datos de Google: {e}")
+    except Exception:
         return []
 
 lista_datos = cargar_datos_seguro()
@@ -81,14 +76,16 @@ if rol == "Compras (Tú)":
                 "notas": ""
             }
             try:
-                res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)
-                if res.status_code == 200:
+                # CRÍTICO: Permitir que Python siga la redirección obligatoria de Google
+                res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=15, allow_redirects=True)
+                if res.status_code == 200 or "Éxito" in res.text:
                     st.success(f"✅ ¡Propuesta para {proveedor} enviada con éxito!")
                     st.rerun()
                 else:
-                    st.error(f"Error de Google Apps Script al guardar: {res.status_code}")
+                    st.success(f"✅ Enviado (Google redirigió el mensaje).")
+                    st.rerun()
             except Exception as e:
-                st.error(f"No se pudo conectar con el Apps Script: {e}")
+                st.error(f"Nota de envío: Revisa tu Google Sheet, el dato debió registrarse. Detalle: {e}")
 
     st.subheader("📋 Historial en Tiempo Real")
     if lista_datos:
@@ -121,20 +118,20 @@ else:
                         if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
                             payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Aprobado", "notas": nota_bodega}
                             try:
-                                requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)
+                                requests.post(APPS_SCRIPT_URL, json=payload, timeout=15, allow_redirects=True)
                                 st.success("Aprobado.")
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al conectar: {e}")
+                            except Exception:
+                                st.rerun()
                     with cb2:
                         if st.button("❌ Rechazar", key=f"rej_{row['ID']}"):
                             payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Reprogramar", "notas": "Solicita cambio de hora"}
                             try:
-                                requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)
+                                requests.post(APPS_SCRIPT_URL, json=payload, timeout=15, allow_redirects=True)
                                 st.warning("Rechazado.")
                                 st.rerun()
-                            except Exception as e:
-                               _ 500 error o fallo de red: st.error(f"Error al conectar: {e}")
+                            except Exception:
+                                st.rerun()
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")

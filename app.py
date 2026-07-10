@@ -3,56 +3,36 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-# Configuración de la página
 st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
 
 st.title("📅 Sistema de Programación de Entregas - Super Barú")
 st.markdown("---")
 
-# 1. Configuración de enlaces directos (No requiere Cuenta de Servicio)
-# Extraemos el ID de tu Google Sheet desde los Secrets para no exponerlo
+# 1. Enlaces desde Secrets
 try:
     SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    # Extraer el ID único del documento entre '/d/' y '/edit'
     SHEET_ID = SHEET_URL.split("/d/")[1].split("/edit")[0]
+    # AGREGA LA URL DE TU WEB APP EN LOS SECRETS ABAJO DE TU SPREADSHEET
+    APPS_SCRIPT_URL = st.secrets["connections"]["gsheets"].get("apps_script_url", "")
 except Exception:
-    st.error("Error al obtener el enlace del Google Sheet desde Secrets. Asegúrate de tener guardado el parámetro [connections.gsheets].")
+    st.error("Verifica la configuración de tus Secrets.")
     st.stop()
 
-# Enlaces para leer y escribir mediante peticiones Web (Web Apps)
 URL_LEER = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
-URL_FORM = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/formResponse"
 
-# Función para leer datos en tiempo real
 def cargar_datos():
     try:
-        # Forzar a Google a enviar datos frescos agregando un parámetro aleatorio al final
         url_fresca = f"{URL_LEER}&cache_bypass={datetime.now().timestamp()}"
         df = pd.read_csv(url_fresca, dtype={'OC': str})
-        
-        # Rellenar vacíos y forzar textos
         if not df.empty:
             df["Notas Bodega"] = df["Notas Bodega"].fillna("").astype(str)
             df["Estado"] = df["Estado"].fillna("Pendiente").astype(str)
-            df["Proveedor"] = df["Proveedor"].fillna("").astype(str)
-            df["OC"] = df["OC"].fillna("").astype(str)
             df["ID"] = pd.to_numeric(df["ID"], errors='coerce').fillna(0).astype(int)
         return df
     except Exception as e:
-        st.error(f"Error al leer la hoja de cálculo: {e}")
         return pd.DataFrame(columns=["ID", "Proveedor", "OC", "Fecha Sugerida", "Hora Sugerida", "Volumen", "Estado", "Notas Bodega"])
 
-# Función para enviar o actualizar datos mediante simulación de envío HTML
-def enviar_datos_web(df_completo):
-    # Dado que no usamos API con credenciales, la forma de guardar los cambios 
-    # de manera masiva o por fila de forma ultra-simple es avisarte si la hoja requiere cambios manuales
-    # o usar un script intermedio. Para garantizar la edición interactiva de Bodega sin servidores:
-    pass
-
-# Inicializar los datos
 df_actual = cargar_datos()
-
-# Selector de Rol en la barra lateral
 rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
 
 # ==========================================
@@ -60,7 +40,6 @@ rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
 # ==========================================
 if rol == "Compras (Tú)":
     st.header("🛒 Registrar Nueva Sugerencia de Entrega")
-    st.info("Nota: Para registrar y modificar los datos de forma directa sin restricciones de red, añade las filas directamente a tu archivo de Google Sheets o usa un formulario conectado.")
     
     with st.form("nuevo_registro"):
         col1, col2, col3 = st.columns(3)
@@ -71,32 +50,66 @@ if rol == "Compras (Tú)":
             fecha = st.date_input("Fecha Sugerida", min_value=datetime.today())
             hora = st.time_input("Hora Sugerida")
         with col3:
-            volumen = st.text_input("Volumen Estimado (Ej: 3 Pallets, 50 Cajas)")
+            volumen = st.text_input("Volumen Estimado")
             
         submit = st.form_submit_button("Enviar a Bodega")
         
         if submit and proveedor and oc:
-            st.warning("🔄 Para guardar los datos en tiempo real de forma directa con seguridad perimetral de red, abre tu Google Sheet y añade la fila.")
+            if not APPS_SCRIPT_URL:
+                st.error("Falta configurar la URL de Apps Script en Secrets.")
+            else:
+                nuevo_id = int(df_actual["ID"].max() + 1) if not df_actual.empty else 1
+                payload = {
+                    "accion": "crear", "id": nuevo_id, "proveedor": proveedor, "oc": str(oc),
+                    "fecha": str(fecha), "hora": hora.strftime("%I:%M %p"), "volumen": volumen,
+                    "estado": "Pendiente", "notas": ""
+                }
+                res = requests.post(APPS_SCRIPT_URL, json=payload)
+                if res.status_code == 200:
+                    st.success(f"Propuesta para {proveedor} enviada con éxito.")
+                    st.rerun()
+                else:
+                    st.error("Error al guardar los datos.")
 
-    st.subheader("📋 Visualización de Entregas Registradas (Tiempo Real)")
-    st.dataframe(df_actual, use_container_width=True)
+    st.subheader("📋 Historial en Tiempo Real")
+    st.dataframe(cargar_datos(), use_container_width=True)
 
 # ==========================================
 # VISTA DE BODEGA
 # ==========================================
 else:
     st.header("📦 Panel de Control de Bodega")
-    st.markdown("Visualice el cronograma de entregas enviadas por Compras desde el Google Sheet.")
-
-    # Mostrar cronograma interactivo basado en los datos de la hoja
     pendientes = df_actual[df_actual["Estado"] == "Pendiente"]
 
     if pendientes.empty:
-        st.info("🎉 No hay entregas pendientes por aprobar registradas en este momento.")
+        st.info("🎉 No hay entregas pendientes.")
     else:
-        st.dataframe(pendientes, use_container_width=True)
+        for idx, row in pendientes.iterrows():
+            with st.container(border=True):
+                c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+                with c1:
+                    st.markdown(f"**Proveedor:** {row['Proveedor']}\n**OC:** {row['OC']}")
+                with c2:
+                    st.markdown(f"**Fecha:** {row['Fecha Sugerida']}\n**Hora:** {row['Hora Sugerida']}")
+                with c3:
+                    st.markdown(f"**Volumen:** {row['Volumen']}")
+                    nota_bodega = st.text_input("Notas:", key=f"nota_{row['ID']}")
+                with c4:
+                    st.write("")
+                    cb1, cb2 = st.columns(2)
+                    with cb1:
+                        if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
+                            payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Aprobado", "notas": nota_bodega}
+                            requests.post(APPS_SCRIPT_URL, json=payload)
+                            st.success("Aprobado.")
+                            st.rerun()
+                    with cb2:
+                        if st.button("❌ Rechazar", key=f"rej_{row['ID']}"):
+                            payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Reprogramar", "notas": "Solicita cambio de hora"}
+                            requests.post(APPS_SCRIPT_URL, json=payload)
+                            st.warning("Rechazado.")
+                            st.rerun()
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")
-    confirmados = df_actual[df_actual["Estado"] != "Pendiente"]
-    st.dataframe(confirmados, use_container_width=True)
+    st.dataframe(df_actual[df_actual["Estado"] != "Pendiente"], use_container_width=True)

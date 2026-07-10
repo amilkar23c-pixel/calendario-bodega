@@ -1,6 +1,6 @@
 import streamlit as st
-import pandas as pd
 import requests
+import csv
 from datetime import datetime
 
 st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
@@ -19,19 +19,35 @@ except Exception:
 
 URL_LEER = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
-def cargar_datos():
+def cargar_datos_seguro():
     try:
         url_fresca = f"{URL_LEER}&cache_bypass={datetime.now().timestamp()}"
-        df = pd.read_csv(url_fresca, dtype={'OC': str})
-        if not df.empty:
-            df["Notas Bodega"] = df["Notas Bodega"].fillna("").astype(str)
-            df["Estado"] = df["Estado"].fillna("Pendiente").astype(str)
-            df["ID"] = pd.to_numeric(df["ID"], errors='coerce').fillna(0).astype(int)
-        return df
+        respuesta = requests.get(url_fresca)
+        if respuesta.status_code != 200:
+            return []
+            
+        lineas = respuesta.text.splitlines()
+        lector = csv.DictReader(lineas)
+        
+        datos = []
+        for fila in lector:
+            # Asegurar limpiar valores nulos o vacíos
+            id_val = fila.get("ID", "0").strip()
+            datos.append({
+                "ID": int(id_val) if id_val.isdigit() else 0,
+                "Proveedor": fila.get("Proveedor", "").strip(),
+                "OC": fila.get("OC", "").strip(),
+                "Fecha Sugerida": fila.get("Fecha Sugerida", "").strip(),
+                "Hora Sugerida": fila.get("Hora Sugerida", "").strip(),
+                "Volumen": fila.get("Volumen", "").strip(),
+                "Estado": fila.get("Estado", "Pendiente").strip() if fila.get("Estado") else "Pendiente",
+                "Notas Bodega": fila.get("Notas Bodega", "").strip()
+            })
+        return datos
     except Exception as e:
-        return pd.DataFrame(columns=["ID", "Proveedor", "OC", "Fecha Sugerida", "Hora Sugerida", "Volumen", "Estado", "Notas Bodega"])
+        return []
 
-df_actual = cargar_datos()
+lista_datos = cargar_datos_seguro()
 rol = st.sidebar.selectbox("Selecciona tu Rol:", ["Compras (Tú)", "Bodega"])
 
 # ==========================================
@@ -57,11 +73,13 @@ if rol == "Compras (Tú)":
             if not APPS_SCRIPT_URL:
                 st.error("Falta configurar la URL de Apps Script en Secrets.")
             else:
-                nuevo_id = int(df_actual["ID"].max() + 1) if not df_actual.empty else 1
+                max_id = max([fila["ID"] for fila in lista_datos]) if lista_datos else 0
+                nuevo_id = max_id + 1
+                
                 payload = {
                     "accion": "crear", "id": nuevo_id, "proveedor": proveedor, "oc": str(oc),
                     "fecha": str(fecha), "hora": hora.strftime("%I:%M %p"), "volumen": volumen,
-                    "estado": "Pendiente", "notes": ""
+                    "estado": "Pendiente", "notas": ""
                 }
                 res = requests.post(APPS_SCRIPT_URL, json=payload)
                 if res.status_code == 200:
@@ -71,20 +89,24 @@ if rol == "Compras (Tú)":
                     st.error("Error al guardar los datos.")
 
     st.subheader("📋 Historial en Tiempo Real")
-    # Corrección de use_container_width a width='stretch'
-    st.dataframe(cargar_datos(), width='stretch')
+    if lista_datos:
+        st.dataframe(lista_datos, width='stretch')
+    else:
+        st.info("No hay registros en la hoja de cálculo.")
 
 # ==========================================
 # VISTA DE BODEGA
 # ==========================================
 else:
     st.header("📦 Panel de Control de Bodega")
-    pendientes = df_actual[df_actual["Estado"] == "Pendiente"]
+    
+    pendientes = [f for f in lista_datos if f["Estado"] == "Pendiente"]
+    confirmados = [f for f in lista_datos if f["Estado"] != "Pendiente"]
 
-    if pendientes.empty:
+    if not pendientes:
         st.info("🎉 No hay entregas pendientes.")
     else:
-        for idx, row in pendientes.iterrows():
+        for row in pendientes:
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
                 with c1:
@@ -93,24 +115,26 @@ else:
                     st.markdown(f"**Fecha:** {row['Fecha Sugerida']}\n**Hora:** {row['Hora Sugerida']}")
                 with c3:
                     st.markdown(f"**Volumen:** {row['Volumen']}")
-                    nota_bodega = st.text_input("Notas:", key=f"nota_{row['ID']}")
+                    nota_bodega = st.text_input("Notas de Devolución / Mermas:", key=f"nota_{row['ID']}")
                 with c4:
                     st.write("")
                     cb1, cb2 = st.columns(2)
                     with cb1:
-                        if st.button("✔️ ...Aprobar", key=f"app_{row['ID']}", type="primary"):
+                        if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
                             payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Aprobado", "notas": nota_bodega}
                             requests.post(APPS_SCRIPT_URL, json=payload)
-                            st.success("Aprobado.")
+                            st.success("Aprobado con éxito.")
                             st.rerun()
                     with cb2:
                         if st.button("❌ Rechazar", key=f"rej_{row['ID']}"):
                             payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Reprogramar", "notas": "Solicita cambio de hora"}
                             requests.post(APPS_SCRIPT_URL, json=payload)
-                            st.warning("Rechazado.")
+                            st.warning("Rechazado con éxito.")
                             st.rerun()
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")
-    # Corrección de use_container_width a width='stretch'
-    st.dataframe(df_actual[df_actual["Estado"] != "Pendiente"], width='stretch')
+    if confirmados:
+        st.dataframe(confirmados, width='stretch')
+    else:
+        st.info("Aún no hay entregas procesadas.")

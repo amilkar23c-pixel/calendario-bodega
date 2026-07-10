@@ -76,7 +76,7 @@ if rol == "Compras (Tú)":
                 "notas": ""
             }
             try:
-                # CRÍTICO: Permitir que Python siga la redirección obligatoria de Google
+                # Permitir que Python siga la redirección de Google
                 res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=15, allow_redirects=True)
                 if res.status_code == 200 or "Éxito" in res.text:
                     st.success(f"✅ ¡Propuesta para {proveedor} enviada con éxito!")

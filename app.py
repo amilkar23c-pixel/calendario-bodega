@@ -12,7 +12,6 @@ st.markdown("---")
 try:
     SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
     SHEET_ID = SHEET_URL.split("/d/")[1].split("/edit")[0]
-    # AGREGA LA URL DE TU WEB APP EN LOS SECRETS ABAJO DE TU SPREADSHEET
     APPS_SCRIPT_URL = st.secrets["connections"]["gsheets"].get("apps_script_url", "")
 except Exception:
     st.error("Verifica la configuración de tus Secrets.")
@@ -62,7 +61,7 @@ if rol == "Compras (Tú)":
                 payload = {
                     "accion": "crear", "id": nuevo_id, "proveedor": proveedor, "oc": str(oc),
                     "fecha": str(fecha), "hora": hora.strftime("%I:%M %p"), "volumen": volumen,
-                    "estado": "Pendiente", "notas": ""
+                    "estado": "Pendiente", "notes": ""
                 }
                 res = requests.post(APPS_SCRIPT_URL, json=payload)
                 if res.status_code == 200:
@@ -72,7 +71,8 @@ if rol == "Compras (Tú)":
                     st.error("Error al guardar los datos.")
 
     st.subheader("📋 Historial en Tiempo Real")
-    st.dataframe(cargar_datos(), use_container_width=True)
+    # Corrección de use_container_width a width='stretch'
+    st.dataframe(cargar_datos(), width='stretch')
 
 # ==========================================
 # VISTA DE BODEGA
@@ -98,7 +98,7 @@ else:
                     st.write("")
                     cb1, cb2 = st.columns(2)
                     with cb1:
-                        if st.button("✔️ Aprobar", key=f"app_{row['ID']}", type="primary"):
+                        if st.button("✔️ ...Aprobar", key=f"app_{row['ID']}", type="primary"):
                             payload = {"accion": "actualizar", "id": int(row["ID"]), "estado": "Aprobado", "notas": nota_bodega}
                             requests.post(APPS_SCRIPT_URL, json=payload)
                             st.success("Aprobado.")
@@ -112,4 +112,5 @@ else:
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")
-    st.dataframe(df_actual[df_actual["Estado"] != "Pendiente"], use_container_width=True)
+    # Corrección de use_container_width a width='stretch'
+    st.dataframe(df_actual[df_actual["Estado"] != "Pendiente"], width='stretch')

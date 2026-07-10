@@ -9,12 +9,18 @@ st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
 st.title("📅 Sistema de Programación de Entregas - Super Barú")
 st.markdown("---")
 
-# 1. Enlaces desde las Variables de Entorno de Render
+# 1. Enlaces desde las Variables de Entorno de Render con Limpieza Estricta
 try:
-    SHEET_URL = os.environ.get("spreadsheet", "").strip()
-    APPS_SCRIPT_URL = os.environ.get("apps_script_url", "").strip()
+    SHEET_URL = os.environ.get("spreadsheet", "")
+    APPS_SCRIPT_URL = os.environ.get("apps_script_url", "")
     
-    # Extracción limpia del ID evitando barras diagonales extras
+    # Purgar espacios, saltos de línea y comillas accidentales
+    if SHEET_URL:
+        SHEET_URL = SHEET_URL.strip().replace("'", "").replace('"', "").replace(" ", "")
+    if APPS_SCRIPT_URL:
+        APPS_SCRIPT_URL = APPS_SCRIPT_URL.strip().replace("'", "").replace('"', "").replace(" ", "")
+
+    # Extracción segura del ID del Google Sheet
     if "/d/" in SHEET_URL:
         SHEET_ID = SHEET_URL.split("/d/")[1].split("/")[0]
     else:
@@ -28,7 +34,6 @@ URL_LEER = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv
 def cargar_datos_seguro():
     try:
         url_fresca = f"{URL_LEER}&cache_bypass={datetime.now().timestamp()}"
-        # Agregamos un timeout de 10 segundos para que no se quede congelado
         respuesta = requests.get(url_fresca, timeout=10)
         
         if respuesta.status_code != 200:
@@ -84,9 +89,15 @@ if rol == "Compras (Tú)":
                 max_id = max([fila["ID"] for fila in lista_datos]) if lista_datos else 0
                 nuevo_id = max_id + 1
                 payload = {
-                    "accion": "crear", "id": nuevo_id, "proveedor": proveedor, "oc": str(oc),
-                    "fecha": str(fecha), "hora": hora.strftime("%I:%M %p"), "volumen": volumen,
-                    "estado": "Pendiente", "notas": ""
+                    "accion": "crear", 
+                    "id": nuevo_id, 
+                    "proveedor": proveedor, 
+                    "oc": str(oc),
+                    "fecha": str(fecha), 
+                    "hora": hora.strftime("%I:%M %p"), 
+                    "volumen": volumen,
+                    "estado": "Pendiente", 
+                    "notas": ""
                 }
                 try:
                     res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)

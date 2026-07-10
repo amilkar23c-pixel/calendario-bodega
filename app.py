@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import csv
-import os
 from datetime import datetime
 
 st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
@@ -9,26 +8,11 @@ st.set_page_config(page_title="Calendario de Recepción Bodega", layout="wide")
 st.title("📅 Sistema de Programación de Entregas - Super Barú")
 st.markdown("---")
 
-# 1. Enlaces desde las Variables de Entorno de Render con Limpieza Estricta
-try:
-    SHEET_URL = os.environ.get("spreadsheet", "")
-    APPS_SCRIPT_URL = os.environ.get("apps_script_url", "")
-    
-    # Purgar espacios, saltos de línea y comillas accidentales
-    if SHEET_URL:
-        SHEET_URL = SHEET_URL.strip().replace("'", "").replace('"', "").replace(" ", "")
-    if APPS_SCRIPT_URL:
-        APPS_SCRIPT_URL = APPS_SCRIPT_URL.strip().replace("'", "").replace('"', "").replace(" ", "")
+# 1. Enlaces Fijos Directos para evitar errores de lectura del servidor
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1j806NrntTxLyxXy2xJv8xP0nPCMS5VTgbcnk29Kf3vk/edit?usp=sharing"
+APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzKl_I7JIxczmSjvu92Bi2Jb0YI9_OfBsXtEcbA6Hz-QT-j1U5myERmfe10GzIiKCLJfA/exec"
 
-    # Extracción segura del ID del Google Sheet
-    if "/d/" in SHEET_URL:
-        SHEET_ID = SHEET_URL.split("/d/")[1].split("/")[0]
-    else:
-        SHEET_ID = SHEET_URL
-except Exception as e:
-    st.error(f"❌ Error al procesar las variables de entorno: {e}")
-    st.stop()
-
+SHEET_ID = "1j806NrntTxLyxXy2xJv8xP0nPCMS5VTgbcnk29Kf3vk"
 URL_LEER = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv"
 
 def cargar_datos_seguro():
@@ -37,7 +21,7 @@ def cargar_datos_seguro():
         respuesta = requests.get(url_fresca, timeout=10)
         
         if respuesta.status_code != 200:
-            st.error(f"⚠️ Google Sheets devolvió el código de estado: {respuesta.status_code}")
+            st.error(f"⚠️ Google Sheets devolvió un código de error: {respuesta.status_code}")
             return []
             
         lineas = respuesta.text.splitlines()
@@ -57,7 +41,7 @@ def cargar_datos_seguro():
             })
         return datos
     except requests.exceptions.Timeout:
-        st.error("⏳ La conexión con Google Sheets tardó demasiado tiempo (Timeout). Reintenta recargando la página.")
+        st.error("⏳ La conexión con Google Sheets tardó demasiado tiempo. Intenta recargar la página.")
         return []
     except Exception as e:
         st.error(f"❌ Error al leer los datos de Google: {e}")
@@ -83,31 +67,28 @@ if rol == "Compras (Tú)":
         submit = st.form_submit_button("Enviar a Bodega")
         
         if submit and proveedor and oc:
-            if not APPS_SCRIPT_URL:
-                st.error("Falta configurar la URL de Apps Script en Render.")
-            else:
-                max_id = max([fila["ID"] for fila in lista_datos]) if lista_datos else 0
-                nuevo_id = max_id + 1
-                payload = {
-                    "accion": "crear", 
-                    "id": nuevo_id, 
-                    "proveedor": proveedor, 
-                    "oc": str(oc),
-                    "fecha": str(fecha), 
-                    "hora": hora.strftime("%I:%M %p"), 
-                    "volumen": volumen,
-                    "estado": "Pendiente", 
-                    "notas": ""
-                }
-                try:
-                    res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)
-                    if res.status_code == 200:
-                        st.success(f"Propuesta para {proveedor} enviada.")
-                        st.rerun()
-                    else:
-                        st.error(f"Error del servidor de Google al guardar: {res.status_code}")
-                except Exception as e:
-                    st.error(f"No se pudo conectar con el Apps Script: {e}")
+            max_id = max([fila["ID"] for fila in lista_datos]) if lista_datos else 0
+            nuevo_id = max_id + 1
+            payload = {
+                "accion": "crear", 
+                "id": nuevo_id, 
+                "proveedor": proveedor, 
+                "oc": str(oc),
+                "fecha": str(fecha), 
+                "hora": hora.strftime("%I:%M %p"), 
+                "volumen": volumen,
+                "estado": "Pendiente", 
+                "notas": ""
+            }
+            try:
+                res = requests.post(APPS_SCRIPT_URL, json=payload, timeout=10)
+                if res.status_code == 200:
+                    st.success(f"✅ ¡Propuesta para {proveedor} enviada con éxito!")
+                    st.rerun()
+                else:
+                    st.error(f"Error de Google Apps Script al guardar: {res.status_code}")
+            except Exception as e:
+                st.error(f"No se pudo conectar con el Apps Script: {e}")
 
     st.subheader("📋 Historial en Tiempo Real")
     if lista_datos:
@@ -121,7 +102,7 @@ else:
     confirmados = [f for f in lista_datos if f["Estado"] != "Pendiente"]
 
     if not pendientes:
-        st.info("🎉 No hay entregas pendientes.")
+        st.info("🎉 No hay entregas pendientes por revisar.")
     else:
         for row in pendientes:
             with st.container():
@@ -153,7 +134,7 @@ else:
                                 st.warning("Rechazado.")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Error al conectar: {e}")
+                               _ 500 error o fallo de red: st.error(f"Error al conectar: {e}")
 
     st.markdown("---")
     st.subheader("🗓️ Cronograma General Confirmado")
